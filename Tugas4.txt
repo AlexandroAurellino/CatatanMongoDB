@@ -1,0 +1,172 @@
+Persiapan buat 6 instance:
+1 instance buat dengan nama mongos (subnet 1a)
+1 instance buat dengan nama configserver (subnet 1a)
+2 buat instance shard (shard1a dan shard1b) dengan masing" subnetnya (subnet 1a)
+2 buat instance shard (shard2a dan shard2b) dengan masing" subnetnya (subnet 1b)
+
+Terus di setting install mongodbnya:
+1. sudo nano /etc/yum.repos.d/mongodb-org-7.0.repo
+
+[mongodb-org-7.0]
+name=MongoDB Repository
+baseurl=https://repo.mongodb.org/yum/amazon/2023/mongodb-org/7.0/x86_64/
+gpgcheck=1
+enabled=1
+gpgkey=https://pgp.mongodb.com/server-7.0.asc
+
+2. sudo yum install -y mongodb-org-7.0.7 mongodb-org-database-7.0.7 mongodb-org-server-7.0.7 mongodb-org-mongos-7.0.7 mongodb-org-tools-7.0.7
+
+3. sudo yum remove mongodb-mongosh -y
+
+4. sudo yum install -y mongodb-org mongodb-mongosh-shared-openssl3
+
+=============Langkah1:
+Konfigurasi pada instance configserver
+
+sudo nano /etc/mongod.conf
+
+#ubah dalam filenya seperti berikut ConfigServer:
+sharding:
+  clusterRole: "configsvr"
+replication:
+  replSetName: "myConfigServer"
+net:
+  bindIp: 0.0.0.0
+
+sudo systemctl start mongod
+
+sudo systemctl enable mongod
+
+mongosh
+
+#initiate single node replica set:
+rs.initiate(
+  {
+    _id: "myConfigServer",
+    configsvr: true,
+    members: [
+      { _id : 0, host : "172.31.18.132:27017" }
+    ]
+  }
+)
+
+Note: dibagian ipnya ambil ip private dari instance configserver
+
+
+===========Langkah2
+Konfigurasi pada setiap instance shard1A dan shard1B dengan config yang sama seperti dibawah
+
+#on config file of each nodes that is a member of shard1:
+
+sudo systemctl stop mongod
+
+sudo nano /etc/mongod.conf
+
+sharding:
+    clusterRole: "shardsvr"
+replication:
+    replSetName: "shard1"
+net:
+    bindIp: 0.0.0.0
+
+#initiate replication from primary node in mongosh:
+
+sudo systemctl start mongod
+
+sudo systemctl enable mongod
+
+
+# dilakukan hanya pada instance shard1A
+mongosh
+
+rs.initiate(
+  {
+    _id : "shard1",
+    members: [
+      { _id : 0, host : "172.31.17.170:27017" },
+      { _id : 1, host : "172.31.43.89:27017" }
+    ]
+  }
+)
+
+
+============Langkah3
+Konfigurasi pada setiap instance shard2A dan shard2B dengan config yang sama seperti dibawah
+sudo systemctl stop mongod
+
+sudo nano /etc/mongod.conf
+sharding:
+    clusterRole: "shardsvr"
+replication:
+    replSetName: "shard2"
+net:
+    bindIp: 0.0.0.0
+
+#initiate replication from primary node in mongosh:
+sudo systemctl start mongod
+
+sudo systemctl enable mongod
+
+# dilakukan hanya pada instance shard1A
+mongosh
+
+rs.initiate(
+  {
+    _id : "shard2",
+    members: [
+      { _id : 0, host : "172.31.26.120:27017" },
+      { _id : 1, host : "172.31.46.198:27017" }
+    ]
+  }
+)
+
+
+=============Langkah4
+Konfigurasi pada instance mongos
+
+#add config server to mongos
+#THIS CONFIG FILE IS DIFFERENT THAN MONGOD.CONF, buat sendiri mongos.conf!
+
+edit dibagian bindIp:
+sudo nano /etc/mongos.conf
+net:
+  port: 27018
+  bindIp: 0.0.0.0
+
+Buat file baru mongos.conf:
+sudo nano /etc/mongos.conf
+sharding:
+  configDB: "myConfigServer/172.31.24.69:27017"
+net:
+  port: 27018
+  bindIp: 0.0.0.0
+
+   #configDB: <configReplSetName>/<private ipv4 configserver1>:27017,<private ipv4 configserver1>:27017, etc
+   #set the sharding.configDB to the config server replica set name and 
+   #at least one member of the replica set in <replSetName>/<host:port> format.
+
+sudo systemctl start mongod
+sudo systemctl enable mongod
+sudo systemctl status mongod
+
+#add each shards to mongos untuk jalanin servernya:
+#START MONGOS NOT MONGOD!!!
+mongos -f /etc/mongos.conf
+
+connect instance mongos lagi untuk masuk terminalnya
+mongosh --host localhost --port 27018
+#open another mongos terminal:
+mongosh
+
+
+#add shard1 dan sesuaikan ip privat instance shard1a dan shard1b:
+sh.addShard("shard1/172.31.17.170:27017,172.31.43.89:27017")
+
+#add shard2 dan sesuaikan ip privat instance shard2a dan shard2b:
+sh.addShard("shard2/172.31.26.120:27017,172.31.46.198:27017")
+
+> mongos will acts as an interface for our query
+  setiap request query akan dilakukan via mongos
+
+#buat collections
+#terapkan sharding pada collections tersebut
